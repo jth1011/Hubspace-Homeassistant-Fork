@@ -224,15 +224,16 @@ async def async_setup_entry(
     controller: ThermostatController = api.thermostats
     make_entity = partial(HubspaceThermostat, bridge, controller)
 
-    @callback
-    def async_add_entity(event_type: EventType, resource: Thermostat) -> None:
-        """Add an entity."""
-        self.logger.debug("Adding entity for resource: %s", resource)
-        async_add_entities([make_entity(resource)])
+    # Debug log for devices
+    bridge.logger.debug("Available devices: %s", api.devices)
 
-    # add all current items in controller
-    async_add_entities(make_entity(entity) for entity in controller)
-    # register listener for new entities
-    config_entry.async_on_unload(
-        controller.subscribe(async_add_entity, event_filter=EventType.RESOURCE_ADDED)
-    )
+    entities = []
+    for device in api.devices:
+        if device.device_class == "portable-air-conditioner":
+            bridge.logger.debug("Processing air conditioner device: %s", device.friendly_name)
+            entities.append(make_entity(device))
+
+    if entities:
+        async_add_entities(entities)
+    else:
+        bridge.logger.warning("No air conditioner devices found.")
