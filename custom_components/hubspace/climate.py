@@ -44,10 +44,36 @@ class HubspaceThermostat(HubspaceBaseEntity, ClimateEntity):
         if self.resource.supports_temperature_range:
             self._supported_features |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
 
+        # Map specific air conditioner functions
+        self._fan_speed_mapping = {
+            "fan-speed-auto": FAN_ON,
+            "fan-speed-2-050": "low",
+            "fan-speed-2-100": "high",
+        }
+        self._hvac_mode_mapping = {
+            "cool": HVACMode.COOL,
+            "auto-cool": HVACMode.HEAT_COOL,
+            "fan": HVACMode.FAN_ONLY,
+            "off": HVACMode.OFF,
+        }
+        self._error_states = {
+            "indoor-temperature-sensor-failed": "Indoor temperature sensor failed",
+            "water-tray-full": "Water tray full",
+        }
+
     @property
     def extra_state_attributes(self):
         """Return the state attributes."""
-        return {}
+        attributes = {
+            "error_states": [
+                self._error_states.get(state.functionInstance, state.value)
+                for state in self.resource.states
+                if state.functionClass == "error" and state.value == "alerting"
+            ],
+            "sleep_mode": self.resource.states.get("sleep", {}).get("value", "off"),
+            "timer": self.resource.states.get("timer", {}).get("value", 0),
+        }
+        return attributes
 
     @property
     def current_temperature(self) -> float | None:
@@ -55,16 +81,11 @@ class HubspaceThermostat(HubspaceBaseEntity, ClimateEntity):
 
     @property
     def fan_mode(self) -> str | None:
-        if self.resource.fan_mode.mode == "on":
-            return FAN_ON
-        elif self.resource.fan_mode.mode == "off":
-            return FAN_OFF
-        else:
-            return self.resource.fan_mode.mode
+        return self._fan_speed_mapping.get(self.resource.fan_mode.mode, FAN_OFF)
 
     @property
     def fan_modes(self) -> list[str] | None:
-        return list(self.resource.fan_mode.modes)
+        return list(self._fan_speed_mapping.values())
 
     @property
     def hvac_action(self) -> HVACAction | None:
@@ -83,32 +104,11 @@ class HubspaceThermostat(HubspaceBaseEntity, ClimateEntity):
 
     @property
     def hvac_mode(self) -> HVACMode | None:
-        mapping = {
-            "cool": HVACMode.COOL,
-            "heat": HVACMode.HEAT,
-            "fan": HVACMode.FAN_ONLY,
-            "off": HVACMode.OFF,
-            "auto": HVACMode.HEAT_COOL,
-        }
-        mapped = mapping.get(self.resource.hvac_mode.mode)
-        if not mapped:
-            self.logger.warning("Unknown hvac mode: %s", self.resource.hvac_mode.mode)
-            return None
-        else:
-            return mapped
+        return self._hvac_mode_mapping.get(self.resource.hvac_mode.mode, HVACMode.OFF)
 
     @property
     def hvac_modes(self) -> list[HVACMode]:
-        mapping = {
-            "cool": HVACMode.COOL,
-            "heat": HVACMode.HEAT,
-            "fan": HVACMode.FAN_ONLY,
-            "off": HVACMode.OFF,
-            "auto": HVACMode.HEAT_COOL,
-        }
-        return [
-            val for key, val in mapping.items() if key in self.resource.hvac_mode.supported_modes
-        ]
+        return list(self._hvac_mode_mapping.values())
 
     @property
     def max_temp(self) -> float | None:
@@ -158,22 +158,24 @@ class HubspaceThermostat(HubspaceBaseEntity, ClimateEntity):
     @update_decorator
     async def async_set_hvac_mode(self, hvac_mode: str) -> None:
         """Set new hvac mode."""
-        mode = await self.translate_hvac_mode_to_hubspace(hvac_mode)
-        await self.bridge.async_request_call(
-            self.controller.set_state, device_id=self.resource.id, hvac_mode=mode
-        )
+        hubspace_mode = next((k for k, v in self._hvac_mode_mapping.items() if v == hvac_mode), None)
+        if hubspace_mode:
+            await self.bridge.async_request_call(
+                self.controller.set_state,
+                device_id=self.resource.id,
+                hvac_mode=hubspace_mode,
+            )
 
     @update_decorator
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Set new fan mode."""
-        tracked_modes = {
-            FAN_ON: "on",
-        }
-        await self.bridge.async_request_call(
-            self.controller.set_state,
-            device_id=self.resource.id,
-            fan_mode=tracked_modes.get(fan_mode, fan_mode),
-        )
+        hubspace_mode = next((k for k, v in self._fan_speed_mapping.items() if v == fan_mode), None)
+        if hubspace_mode:
+            await self.bridge.async_request_call(
+                self.controller.set_state,
+                device_id=self.resource.id,
+                fan_mode=hubspace_mode,
+            )
 
     @update_decorator
     async def async_set_temperature(self, **kwargs):
@@ -187,6 +189,24 @@ class HubspaceThermostat(HubspaceBaseEntity, ClimateEntity):
             hvac_mode=await self.translate_hvac_mode_to_hubspace(
                 kwargs.get(ATTR_HVAC_MODE)
             ),
+        )
+
+    @update_decorator
+    async def async_set_sleep_mode(self, sleep_mode: str) -> None:
+        """Set sleep mode."""
+        await self.bridge.async_request_call(
+            self.controller.set_state,
+            device_id=self.resource.id,
+            sleep_mode=sleep_mode,
+        )
+
+    @update_decorator
+    async def async_set_timer(self, timer: int) -> None:
+        """Set timer."""
+        await self.bridge.async_request_call(
+            self.controller.set_state,
+            device_id=self.resource.id,
+            timer=timer,
         )
 
 
