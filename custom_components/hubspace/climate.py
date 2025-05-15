@@ -73,6 +73,9 @@ class HubspaceThermostat(HubspaceBaseEntity, ClimateEntity):
             "sleep_mode": self.resource.states.get("sleep", {}).get("value", "off"),
             "timer": self.resource.states.get("timer", {}).get("value", 0),
         }
+        # Add debug logging for error states
+        if attributes["error_states"]:
+            self.logger.debug("Error states detected: %s", attributes["error_states"])
         return attributes
 
     @property
@@ -224,6 +227,7 @@ async def async_setup_entry(
     @callback
     def async_add_entity(event_type: EventType, resource: Thermostat) -> None:
         """Add an entity."""
+        self.logger.debug("Adding entity for resource: %s", resource)
         async_add_entities([make_entity(resource)])
 
     # add all current items in controller
